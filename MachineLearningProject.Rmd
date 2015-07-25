@@ -1,0 +1,123 @@
+---
+title: "Practical Machine Learning Project"
+author: "Robin"
+date: "July 23, 2015"
+output: html_document
+---
+
+# Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+#Question
+Given the training dataset from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv, try to build a machine learning model based on the training set to predict the test data from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv.
+
+The data for this project comes from this source: http://groupware.les.inf.puc-rio.br/har.  
+    
+# Executive Summary
+1. Download the training data and test data.
+2. Explore the training set, clean it and get a relatively small and predictable dataset.
+3. Partition the training set, apply cross validation and random forest algorithm to get a model.
+4. Apply cross validation and decision tree algorithm to train another model.
+5. Compare the two models, calculate the out-of sample error and choose a better one.
+6. Apply the chosen prediction model to the test set and  get the prediction.
+
+# Detailed Procedures:
+### 1. Download the training data and test data and explore one the data.
+```{r setup, include=FALSE}
+#set globally cache because the training on random forest is time consuming
+knitr::opts_chunk$set(cache=TRUE)
+``` 
+```{r, echo=TRUE,eval=TRUE}
+#import necessary library
+library(caret)
+library('rpart')
+
+#download training data
+urlTraining="http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+training=read.csv(file=urlTraining)
+#get first peek on the training data
+#str(training)
+levels(training$classe)
+
+#download test data
+urlTesting="http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+testing=read.csv(file=urlTesting)
+
+#get first peek on the test data
+#str(testing)
+```
+Training set is a dataset with 19622 rows of  160 variables. After opening the data, we can find there are many columns with many NA. For example, columns total_accel_belt, kurtosis_roll_belt, kurtosis_picth_belt and so on. Actually almost all statistical columns are NA. Meanwhile, some columns only have few values. There is an important fact about the classification levels of the data which consist of 5 levels: A, B, C, D, E. We will classify the test data to this 5 levels.
+ 
+### 2.Make exploration and cleanup on training data. 
+First, we delete all the columns with all NA. Then we delete all the columns with irrelative info including user_name, timestamp and so on. Third, we delete all the columns with only few values, because they can't form reasonable result in prediction.
+```{r, echo=TRUE,eval=TRUE}
+#delete columns with all NA
+trainingRemoveNA=training[,colSums(is.na(training))==0]
+dim(trainingRemoveNA)
+
+#delete columns 1-7 of training data because they're irrelevant info about timestamp or window
+trainingRemovedFirstSeven=trainingRemoveNA[,-c(1:7)]
+
+dim(trainingRemovedFirstSeven)
+
+#delete the columns of training set with just few values
+trainingAdjusted=trainingRemovedFirstSeven[,-nearZeroVar(trainingRemovedFirstSeven)]
+dim(trainingAdjusted)
+```
+After cleaning, the training set named trainingAdjusted is now a much smaller dataset with 19622 rows of 53 variables.
+
+### 3. Partition the training set, apply cross validation and random forest algorithm to train a model.
+We divide the cleaned training set to 2 parts with a ratio of 6:4. One is trainingFinal, the other is a validation set. To predict the classfication, we can choose some methods to build models. The normal methods are random forest and decision tree. Random forest can get good model but always will take a long time to train. In the beginning, we will train a model based on random forest here, and apply the model to the validation data and get out-of-sample error in the next part. 
+```{r, echo=TRUE,eval=TRUE,message=FALSE,warning=FALSE}
+set.seed(1000)
+#divide the original training set to two parts: trainingFianl and validation
+inTrain = createDataPartition(trainingAdjusted$classe, p = 0.6,list=FALSE)
+trainingFinal = trainingAdjusted[ inTrain,]
+validation = trainingAdjusted[-inTrain,]
+
+#apply 4-fold method method for train data to get average accuracy
+train_control <- trainControl(method="cv",number=4)
+
+#train the model with random forest algorithm
+modelForest <- train(classe~., data=trainingFinal,trControl=train_control,method="rf",prox=TRUE,allowParallel=TRUE)
+#print(modelForest$finalModel)
+
+#get the performance of training set by the model trained with random forest
+confusionMatrix(predict(modelForest,trainingFinal),trainingFinal$classe)
+```
+We can find the model trained by this method is ideal for the accuracy is 1, p-value is 2.2e-16. It's perfect. But we might be wondering if it's overfitting. So we need apply it to validation set to find the out-of-sample performance.
+
+###4. Apply cross validation and decision tree algorithm to get another model.
+```{r, echo=TRUE,eval=TRUE}
+#train the model with decision tree algorithm
+modelTree=train(classe~., data=trainingFinal, trControl=train_control,method="rpart")
+
+confusionMatrix(predict(modelTree,trainingFinal),trainingFinal$classe)
+```
+Apparently, the model based on decision tree is not so good for it's accuracy is 56.48%, p-value is 2.2e-16.
+
+###5 Compare the two models and choose a better one.
+```{r, echo=TRUE,eval=TRUE}
+#get the performance of the validation set by ModelForest and get out-of sample error
+confusionMatrix(predict(modelForest,validation),validation$classe)
+
+#get the performance of the validation set by ModelTree and get out-of sample error
+confusionMatrix(predict(modelTree, validation),validation$classe)
+```
+Applying the models got above to validation set, it's clear the model based on random forest is better. Its out-of-sample accuracy is 99.03% and its out-of-sample error is 0.97%. It predicts 7770 right out of 7846 examples.
+
+But the accuracy of model based on decision tree is 55.23% and out-of-sample error is 54.77%.
+
+So we'll choose the first model we built on random forest definitely.
+
+###6. Apply the modelForest to the test set and  get the prediction.
+```{r, echo=TRUE,eval=TRUE}
+predictions <- predict(modelForest, testing) 
+print(predictions)
+```
+Using the model we have chosen to predict the test set, we can get the final 20 results:
+B A B A A E D B A A B C B A E E A B B B.
+
+# Conclusion
+Base on the training set, we first explore and clean the training set. Then we build two prediction models by random forest and decision tree separately. We can find the performance of the model trained by random forest is better. Its out-of-sample accuracy is 99.03% and its out-of-sample error is 0.97%. At last we use the model to predict the results for test data. The results are listed as this: B A B A A E D B A A B C B A E E A B B B.
+
